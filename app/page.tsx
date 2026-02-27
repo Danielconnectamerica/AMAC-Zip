@@ -1,212 +1,120 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useMemo, useState } from "react";
 
-type ApiResult = { ok: boolean; msg: string };
-
-export default function AdminPage() {
-  const [token, setToken] = useState("");
+export default function HomePage() {
   const [zip, setZip] = useState("");
-  const [installers, setInstallers] = useState("");
-  const [result, setResult] = useState<ApiResult | null>(null);
   const [loading, setLoading] = useState(false);
+  const [result, setResult] = useState<any>(null);
+  const [error, setError] = useState<string | null>(null);
 
-  // Load/save token for convenience (this browser only)
-  useEffect(() => {
-    const saved = localStorage.getItem("admin_token");
-    if (saved) setToken(saved);
-  }, []);
+  const normalizedHint = useMemo(() => {
+    const t = zip.trim();
+    if (!t) return "";
+    // Show a friendly hint (client-side only)
+    const five = t.split("-")[0];
+    if (/^\d{5}$/.test(five)) return `Checking ${five}…`;
+    return "Enter a 5-digit ZIP (ZIP+4 accepted)";
+  }, [zip]);
 
-  useEffect(() => {
-    if (token) localStorage.setItem("admin_token", token);
-  }, [token]);
-
-  function installersArray(): string[] {
-    return installers
-      .split(",")
-      .map((s) => s.trim())
-      .filter(Boolean);
-  }
-
-  async function callAdmin(endpoint: string, body: any) {
-    setLoading(true);
+  async function onCheck() {
+    setError(null);
     setResult(null);
 
-    try {
-      const res = await fetch(endpoint, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-admin-token": token
-        },
-        body: JSON.stringify(body)
-      });
+    const z = zip.trim();
+    if (!z) {
+      setError("Please enter a ZIP code.");
+      return;
+    }
 
+    setLoading(true);
+    try {
+      const res = await fetch(`/api/lookup?zip=${encodeURIComponent(z)}`);
       const data = await res.json().catch(() => ({}));
 
       if (!res.ok) {
-        setResult({
-          ok: false,
-          msg: data?.details
-            ? `${data?.error || "Error"}: ${data.details}`
-            : data?.error || `Error ${res.status}`
-        });
+        setError(data?.error || `Lookup failed (${res.status})`);
         return;
       }
 
-      setResult({ ok: true, msg: "Success ✅ (Committed to GitHub)" });
+      setResult(data);
     } catch (e: any) {
-      setResult({ ok: false, msg: e?.message || "Request failed" });
+      setError(e?.message || "Lookup failed");
     } finally {
       setLoading(false);
     }
   }
 
-  async function onAddMerge() {
-    const arr = installersArray();
-    if (!zip.trim()) return setResult({ ok: false, msg: "Enter a ZIP (5 digits or ZIP+4)" });
-    if (arr.length === 0) return setResult({ ok: false, msg: "Enter installer(s)" });
-
-    await callAdmin("/api/admin/add", { zip, installers: arr });
-  }
-
-  async function onUpdateReplace() {
-    const arr = installersArray();
-    if (!zip.trim()) return setResult({ ok: false, msg: "Enter a ZIP (5 digits or ZIP+4)" });
-    if (arr.length === 0) return setResult({ ok: false, msg: "Enter installer(s)" });
-
-    await callAdmin("/api/admin/update", { zip, installers: arr });
-  }
-
-  async function onRemove() {
-    if (!zip.trim()) return setResult({ ok: false, msg: "Enter a ZIP (5 digits or ZIP+4)" });
-
-    const ok = confirm(`Remove ZIP ${zip}? This deletes it from coverage.`);
-    if (!ok) return;
-
-    await callAdmin("/api/admin/remove", { zip });
-  }
-
-  async function downloadCsv() {
-    setLoading(true);
-    setResult(null);
-
-    try {
-      const res = await fetch("/api/admin/export", {
-        method: "GET",
-        headers: { "x-admin-token": token }
-      });
-
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        setResult({
-          ok: false,
-          msg: data?.details
-            ? `${data?.error || "Export failed"}: ${data.details}`
-            : data?.error || `Export failed (${res.status})`
-        });
-        return;
-      }
-
-      const blob = await res.blob();
-      const url = window.URL.createObjectURL(blob);
-
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = "zip-installers.csv";
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-
-      window.URL.revokeObjectURL(url);
-      setResult({ ok: true, msg: "CSV downloaded ✅" });
-    } catch (e: any) {
-      setResult({ ok: false, msg: e?.message || "Export failed" });
-    } finally {
-      setLoading(false);
-    }
+  function onKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
+    if (e.key === "Enter") onCheck();
   }
 
   return (
-    <div className="container">
-      <h1>Admin — AMAC ZIP Coverage</h1>
-
-      <p style={{ marginTop: 6, color: "#444" }}>
-        Token is set in Vercel env var <code>ADMIN_TOKEN</code>. (You chose: <b>amac123</b>)
-      </p>
-
-      <label style={{ display: "block", marginTop: 18 }}>Admin Token</label>
-      <input
-        value={token}
-        onChange={(e) => setToken(e.target.value)}
-        placeholder="amac123"
-        autoComplete="off"
-      />
-
-      <label style={{ display: "block", marginTop: 12 }}>ZIP (5 digits or ZIP+4)</label>
-      <input
-        value={zip}
-        onChange={(e) => setZip(e.target.value)}
-        placeholder="e.g. 60001 or 60001-1234"
-        autoComplete="off"
-      />
-
-      <label style={{ display: "block", marginTop: 12 }}>
-        Installer(s) (comma separated)
-      </label>
-      <input
-        value={installers}
-        onChange={(e) => setInstallers(e.target.value)}
-        placeholder="e.g. Lincoln, Darrell"
-        autoComplete="off"
-      />
-
-      {/* ✅ Buttons live right here */}
-      <div style={{ display: "flex", gap: 10, marginTop: 14, flexWrap: "wrap" }}>
-        <button onClick={onAddMerge} disabled={loading}>
-          Add / Merge
-        </button>
-
-        <button onClick={onUpdateReplace} disabled={loading}>
-          Update / Replace
-        </button>
-
-        <button onClick={onRemove} disabled={loading}>
-          Remove ZIP
-        </button>
-
-        <button onClick={downloadCsv} disabled={loading}>
-          Download CSV
-        </button>
-      </div>
-
-      {loading && <p style={{ marginTop: 12 }}>Working…</p>}
-
-      {result && (
-        <div
-          style={{
-            marginTop: 12,
-            padding: 10,
-            border: "1px solid #ddd",
-            borderRadius: 8
-          }}
-        >
-          <b style={{ color: result.ok ? "green" : "crimson" }}>
-            {result.ok ? "OK" : "Error"}
-          </b>
-          <div style={{ marginTop: 6 }}>{result.msg}</div>
+    <main className="page">
+      <div className="card">
+        <div className="brandRow">
+          <div className="badge">Connect AMAC</div>
+          <div className="muted">ZIP Coverage Checker</div>
         </div>
-      )}
 
-      <hr style={{ margin: "18px 0" }} />
+        <h1 className="title">Check Installation Coverage</h1>
+        <p className="subtitle">
+          Enter your 5-digit ZIP code (ZIP+4 works too). We’ll tell you if the area is covered and who the installer is.
+        </p>
 
-      <h3>Button behavior</h3>
-      <ul style={{ color: "#444" }}>
-        <li><b>Add / Merge</b>: Adds installer(s) to the ZIP without removing existing ones.</li>
-        <li><b>Update / Replace</b>: Overwrites the ZIP’s installer list.</li>
-        <li><b>Remove ZIP</b>: Deletes the ZIP from the coverage list.</li>
-        <li><b>Download CSV</b>: Exports all ZIPs + installers for checking in Excel.</li>
-      </ul>
-    </div>
+        <div className="formRow">
+          <input
+            className="input"
+            value={zip}
+            onChange={(e) => setZip(e.target.value)}
+            onKeyDown={onKeyDown}
+            placeholder="e.g., 60001 or 60001-1234"
+            inputMode="numeric"
+            autoComplete="postal-code"
+          />
+          <button className="button" onClick={onCheck} disabled={loading}>
+            {loading ? "Checking…" : "Check"}
+          </button>
+        </div>
+
+        {normalizedHint && <div className="hint">{normalizedHint}</div>}
+
+        {error && (
+          <div className="alert error">
+            <b>Error:</b> {error}
+          </div>
+        )}
+
+        {result && (
+          <div className={`result ${result.covered ? "yes" : "no"}`}>
+            <div className="resultTop">
+              <div className="resultBig">{result.covered ? "YES" : "NO"}</div>
+              <div className="resultSmall">
+                {result.covered
+                  ? "This ZIP is covered."
+                  : "This ZIP is not currently covered."}
+              </div>
+            </div>
+
+            {result.covered && Array.isArray(result.installers) && (
+              <div className="installers">
+                <div className="label">Installer(s)</div>
+                <div className="pillRow">
+                  {result.installers.map((name: string) => (
+                    <span key={name} className="pill">
+                      {name}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        <div className="footerNote">
+          Internal admin? Go to <code>/admin</code>.
+        </div>
+      </div>
+    </main>
   );
 }
