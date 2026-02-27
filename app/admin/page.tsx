@@ -11,7 +11,7 @@ export default function AdminPage() {
   const [result, setResult] = useState<ApiResult | null>(null);
   const [loading, setLoading] = useState(false);
 
-  // Optional: remember token in this browser
+  // Load/save token for convenience (this browser only)
   useEffect(() => {
     const saved = localStorage.getItem("admin_token");
     if (saved) setToken(saved);
@@ -21,7 +21,7 @@ export default function AdminPage() {
     if (token) localStorage.setItem("admin_token", token);
   }, [token]);
 
-  function installersArray() {
+  function installersArray(): string[] {
     return installers
       .split(",")
       .map((s) => s.trim())
@@ -47,11 +47,14 @@ export default function AdminPage() {
       if (!res.ok) {
         setResult({
           ok: false,
-          msg: data?.error || data?.details || `Error ${res.status}`
+          msg: data?.details
+            ? `${data?.error || "Error"}: ${data.details}`
+            : data?.error || `Error ${res.status}`
         });
-      } else {
-        setResult({ ok: true, msg: "Success ✅ (Committed to GitHub)" });
+        return;
       }
+
+      setResult({ ok: true, msg: "Success ✅ (Committed to GitHub)" });
     } catch (e: any) {
       setResult({ ok: false, msg: e?.message || "Request failed" });
     } finally {
@@ -61,7 +64,7 @@ export default function AdminPage() {
 
   async function onAddMerge() {
     const arr = installersArray();
-    if (!zip.trim()) return setResult({ ok: false, msg: "Enter a ZIP" });
+    if (!zip.trim()) return setResult({ ok: false, msg: "Enter a ZIP (5 digits or ZIP+4)" });
     if (arr.length === 0) return setResult({ ok: false, msg: "Enter installer(s)" });
 
     await callAdmin("/api/admin/add", { zip, installers: arr });
@@ -69,26 +72,67 @@ export default function AdminPage() {
 
   async function onUpdateReplace() {
     const arr = installersArray();
-    if (!zip.trim()) return setResult({ ok: false, msg: "Enter a ZIP" });
+    if (!zip.trim()) return setResult({ ok: false, msg: "Enter a ZIP (5 digits or ZIP+4)" });
     if (arr.length === 0) return setResult({ ok: false, msg: "Enter installer(s)" });
 
     await callAdmin("/api/admin/update", { zip, installers: arr });
   }
 
   async function onRemove() {
-    if (!zip.trim()) return setResult({ ok: false, msg: "Enter a ZIP" });
+    if (!zip.trim()) return setResult({ ok: false, msg: "Enter a ZIP (5 digits or ZIP+4)" });
 
-    const confirmMsg = `Remove ZIP ${zip}? This deletes it from coverage.`;
-    if (!confirm(confirmMsg)) return;
+    const ok = confirm(`Remove ZIP ${zip}? This deletes it from coverage.`);
+    if (!ok) return;
 
     await callAdmin("/api/admin/remove", { zip });
+  }
+
+  async function downloadCsv() {
+    setLoading(true);
+    setResult(null);
+
+    try {
+      const res = await fetch("/api/admin/export", {
+        method: "GET",
+        headers: { "x-admin-token": token }
+      });
+
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        setResult({
+          ok: false,
+          msg: data?.details
+            ? `${data?.error || "Export failed"}: ${data.details}`
+            : data?.error || `Export failed (${res.status})`
+        });
+        return;
+      }
+
+      const blob = await res.blob();
+      const url = window.URL.createObjectURL(blob);
+
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "zip-installers.csv";
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+
+      window.URL.revokeObjectURL(url);
+      setResult({ ok: true, msg: "CSV downloaded ✅" });
+    } catch (e: any) {
+      setResult({ ok: false, msg: e?.message || "Export failed" });
+    } finally {
+      setLoading(false);
+    }
   }
 
   return (
     <div className="container">
       <h1>Admin — AMAC ZIP Coverage</h1>
+
       <p style={{ marginTop: 6, color: "#444" }}>
-        Token: <b>amac123</b> (set in Vercel env var <code>ADMIN_TOKEN</code>)
+        Token is set in Vercel env var <code>ADMIN_TOKEN</code>. (You chose: <b>amac123</b>)
       </p>
 
       <label style={{ display: "block", marginTop: 18 }}>Admin Token</label>
@@ -117,6 +161,7 @@ export default function AdminPage() {
         autoComplete="off"
       />
 
+      {/* ✅ Buttons live right here */}
       <div style={{ display: "flex", gap: 10, marginTop: 14, flexWrap: "wrap" }}>
         <button onClick={onAddMerge} disabled={loading}>
           Add / Merge
@@ -128,6 +173,10 @@ export default function AdminPage() {
 
         <button onClick={onRemove} disabled={loading}>
           Remove ZIP
+        </button>
+
+        <button onClick={downloadCsv} disabled={loading}>
+          Download CSV
         </button>
       </div>
 
@@ -146,21 +195,17 @@ export default function AdminPage() {
             {result.ok ? "OK" : "Error"}
           </b>
           <div style={{ marginTop: 6 }}>{result.msg}</div>
-          {result.ok && (
-            <div style={{ marginTop: 6, color: "#555" }}>
-              Tip: check GitHub commits + Vercel deployments to confirm the redeploy.
-            </div>
-          )}
         </div>
       )}
 
       <hr style={{ margin: "18px 0" }} />
 
-      <h3>How buttons work</h3>
+      <h3>Button behavior</h3>
       <ul style={{ color: "#444" }}>
-        <li><b>Add / Merge</b> = adds installers to the ZIP without removing existing ones.</li>
-        <li><b>Update / Replace</b> = overwrites the ZIP’s installer list.</li>
-        <li><b>Remove ZIP</b> = deletes the ZIP completely.</li>
+        <li><b>Add / Merge</b>: Adds installer(s) to the ZIP without removing existing ones.</li>
+        <li><b>Update / Replace</b>: Overwrites the ZIP’s installer list.</li>
+        <li><b>Remove ZIP</b>: Deletes the ZIP from the coverage list.</li>
+        <li><b>Download CSV</b>: Exports all ZIPs + installers for checking in Excel.</li>
       </ul>
     </div>
   );
