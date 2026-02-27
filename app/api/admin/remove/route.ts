@@ -1,4 +1,4 @@
-import { requireAdmin } from "../_auth";
+import { isAdmin } from "../_auth";
 import { commitZipMap } from "@/lib/github";
 import { normalizeZip } from "@/lib/zip";
 
