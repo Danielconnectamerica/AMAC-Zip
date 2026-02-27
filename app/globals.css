@@ -1,0 +1,27 @@
+:root {
+  color-scheme: light;
+}
+
+body {
+  margin: 0;
+  font-family: Arial, sans-serif;
+}
+
+.container {
+  max-width: 720px;
+  margin: 40px auto;
+  padding: 0 16px;
+}
+
+input {
+  width: 100%;
+  padding: 10px;
+  font-size: 16px;
+  margin: 8px 0;
+}
+
+button {
+  padding: 10px 14px;
+  font-size: 16px;
+  cursor: pointer;
+}
