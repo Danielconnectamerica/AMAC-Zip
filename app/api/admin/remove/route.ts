@@ -2,12 +2,12 @@ import { isAdmin } from "../_auth";
 import { commitZipMap } from "@/lib/github";
 import { normalizeZip } from "@/lib/zip";
 
-let cache: { at: number; data: Record<string, string[]>; sha?: string } | null = null;
+type ZipMap = Record<string, string[]>;
 
-async function fetchZipMapFromGitHub() {
-  const token = process.env.GITHUB_TOKEN!;
-  const owner = process.env.GITHUB_OWNER!;
-  const repo = process.env.GITHUB_REPO!;
+async function fetchZipMapFromGitHub(): Promise<ZipMap> {
+  const token = process.env.GITHUB_TOKEN as string;
+  const owner = process.env.GITHUB_OWNER as string;
+  const repo = process.env.GITHUB_REPO as string;
   const branch = process.env.GITHUB_BRANCH || "main";
   const path = process.env.ZIPMAP_PATH || "data/zipmap.json";
 
@@ -22,43 +22,63 @@ async function fetchZipMapFromGitHub() {
   });
 
   if (!res.ok) {
-    const t = await res.text();
-    throw new Error(`Failed to read zipmap.json from GitHub: ${t}`);
+    const text = await res.text();
+    throw new Error(`GitHub read failed: ${text}`);
   }
 
-  const payload: any = await res.json();
+  const payload = await res.json();
   const decoded = Buffer.from(payload.content, "base64").toString("utf8");
-  const data = JSON.parse(decoded) as Record<string, string[]>;
 
-  return { data, sha: payload.sha as string };
+  return JSON.parse(decoded) as ZipMap;
 }
 
 export async function POST(req: Request) {
   try {
-    requireAdmin(req);
+    // 🔐 Admin check
+    if (!isAdmin(req)) {
+      return new Response(
+        JSON.stringify({ error: "Unauthorized" }),
+        { status: 401 }
+      );
+    }
 
     const body = await req.json();
     const cleanZip = normalizeZip(String(body.zip || ""));
 
     if (!cleanZip) {
-      return Response.json({ error: "Invalid ZIP. Use 5 digits or ZIP+4." }, { status: 400 });
+      return new Response(
+        JSON.stringify({ error: "Invalid ZIP format" }),
+        { status: 400 }
+      );
     }
 
-    // Always pull latest from GitHub so we delete the correct key
-    const { data: map } = await fetchZipMapFromGitHub();
+    const map = await fetchZipMapFromGitHub();
 
     if (!map[cleanZip]) {
-      return Response.json({ error: `ZIP ${cleanZip} not found` }, { status: 404 });
+      return new Response(
+        JSON.stringify({ error: `ZIP ${cleanZip} not found` }),
+        { status: 404 }
+      );
     }
 
+    // 🗑 Remove ZIP
     delete map[cleanZip];
 
     await commitZipMap(map);
 
-    return Response.json({ success: true, removed: cleanZip });
+    return new Response(
+      JSON.stringify({
+        success: true,
+        removed: cleanZip,
+      }),
+      { status: 200 }
+    );
   } catch (err: any) {
-    return Response.json(
-      { error: "Remove failed", details: err?.message || String(err) },
+    return new Response(
+      JSON.stringify({
+        error: "Remove failed",
+        details: err?.message || String(err),
+      }),
       { status: 500 }
     );
   }
