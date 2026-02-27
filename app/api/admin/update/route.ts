@@ -1,11 +1,13 @@
-import { requireAdmin } from "../_auth";
+import { isAdmin } from "../_auth";
 import { commitZipMap } from "@/lib/github";
 import { normalizeZip } from "@/lib/zip";
 
-async function fetchZipMapFromGitHub(): Promise<Record<string, string[]>> {
-  const token = process.env.GITHUB_TOKEN!;
-  const owner = process.env.GITHUB_OWNER!;
-  const repo = process.env.GITHUB_REPO!;
+type ZipMap = Record<string, string[]>;
+
+async function fetchZipMapFromGitHub(): Promise<ZipMap> {
+  const token = process.env.GITHUB_TOKEN as string;
+  const owner = process.env.GITHUB_OWNER as string;
+  const repo = process.env.GITHUB_REPO as string;
   const branch = process.env.GITHUB_BRANCH || "main";
   const path = process.env.ZIPMAP_PATH || "data/zipmap.json";
 
@@ -20,72 +22,73 @@ async function fetchZipMapFromGitHub(): Promise<Record<string, string[]>> {
   });
 
   if (!res.ok) {
-    const t = await res.text();
-    throw new Error(`Failed to read zipmap.json from GitHub: ${t}`);
+    const text = await res.text();
+    throw new Error(`GitHub read failed: ${text}`);
   }
 
-  const payload: any = await res.json();
+  const payload = await res.json();
   const decoded = Buffer.from(payload.content, "base64").toString("utf8");
-  const data = JSON.parse(decoded) as Record<string, string[]>;
 
-  return data;
-}
-
-function normalizeInstallers(input: unknown): string[] {
-  // Accept array OR comma-separated string
-  if (Array.isArray(input)) {
-    return input
-      .map((x) => String(x).trim())
-      .filter(Boolean);
-  }
-  if (typeof input === "string") {
-    return input
-      .split(",")
-      .map((s) => s.trim())
-      .filter(Boolean);
-  }
-  return [];
+  return JSON.parse(decoded) as ZipMap;
 }
 
 export async function POST(req: Request) {
   try {
-    requireAdmin(req);
+    if (!isAdmin(req)) {
+      return new Response(
+        JSON.stringify({ error: "Unauthorized" }),
+        { status: 401 }
+      );
+    }
 
     const body = await req.json();
 
     const cleanZip = normalizeZip(String(body.zip || ""));
     if (!cleanZip) {
-      return Response.json(
-        { error: "Invalid ZIP. Use 5 digits or ZIP+4." },
+      return new Response(
+        JSON.stringify({ error: "Invalid ZIP format" }),
         { status: 400 }
       );
     }
 
-    const installers = normalizeInstallers(body.installers);
+    const installersInput = body.installers;
+
+    let installers: string[] = [];
+
+    if (Array.isArray(installersInput)) {
+      installers = installersInput
+        .map((x) => String(x).trim())
+        .filter(Boolean);
+    }
 
     if (installers.length === 0) {
-      return Response.json(
-        { error: "Installers required (at least 1). Use comma-separated names." },
+      return new Response(
+        JSON.stringify({ error: "Installers required" }),
         { status: 400 }
       );
     }
 
-    // Always pull latest from GitHub so we don't overwrite with stale data
     const map = await fetchZipMapFromGitHub();
 
-    // Replace installers (true update)
-    map[cleanZip] = Array.from(new Set(installers)); // de-dupe just in case
+    // Replace installer list
+    map[cleanZip] = Array.from(new Set(installers));
 
     await commitZipMap(map);
 
-    return Response.json({
-      success: true,
-      zip: cleanZip,
-      installers: map[cleanZip],
-    });
+    return new Response(
+      JSON.stringify({
+        success: true,
+        zip: cleanZip,
+        installers: map[cleanZip],
+      }),
+      { status: 200 }
+    );
   } catch (err: any) {
-    return Response.json(
-      { error: "Update failed", details: err?.message || String(err) },
+    return new Response(
+      JSON.stringify({
+        error: "Update failed",
+        details: err?.message || String(err),
+      }),
       { status: 500 }
     );
   }
